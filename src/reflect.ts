@@ -33,50 +33,64 @@ const findElement = memorized(function findElement(struct: WithElements, name: s
  * @param model the model, for multi-tenancy, the object should be different
  * @returns 
  */
+
 const find = memorized(
-  (
-    kind: Kind,
-    name: string,
-    model?: LinkedModel
-  ): Definition | undefined => {
-
-
+  (kind: Kind, name: string, model?: LinkedModel): Definition | undefined => {
     const cds = cwdRequireCDS();
     model = model ?? cds.model;
-    // TODO: if the model is plain CSN, convert it to LinkedCSN
 
-    // if exact equal
-    if (model.definitions[name] !== undefined && model.definitions[name].kind === kind) {
-      return model.definitions[name];
-    }
+    const getDefinition = (defName: string): Definition | undefined => {
+      const normalizedDefName = normalizeIdentifier(defName);
+      const definition = model.definitions[normalizedDefName];
+      if (definition && definition.kind === kind) {
+        return definition;
+      }
+      return undefined;
+    };
+
+    const findInEntities = (): Definition | undefined => {
+      if (kind === "action" || kind === "function") {
+        for (const entity of model.each("entity")) {
+          const actions = Object.values(entity?.actions ?? []);
+          for (const action of actions.filter(a => a.kind === kind)) {
+            const actionName = `${entity.name}.${action.name}`;
+            if (normalizeIdentifier(actionName).endsWith(iName)) {
+              return action;
+            }
+          }
+        }
+      }
+      return undefined;
+    };
 
     const iName = normalizeIdentifier(name);
 
-    // for drafts model, firstly go to the definition without drafts
-    if (name.endsWith("_drafts")) {
-      const def = find(kind, name.substring(0, name.length - 7), model);
-      if (def !== undefined && def.drafts?.name !== undefined && normalizeIdentifier(def.drafts?.name) === iName) { return def; }
+    if (model.definitions[name]?.kind === kind) {
+      return model.definitions[name];
     }
 
-    if (model.definitions[iName] !== undefined && model.definitions[iName].kind === kind) {
-      return model.definitions[iName];
+    if (name.endsWith("_drafts")) {
+      const draftDef = find(kind, name.substring(0, name.length - 7), model);
+      if (draftDef?.drafts?.name !== undefined && normalizeIdentifier(draftDef.drafts?.name) === iName) {
+        return draftDef;
+      }
+    }
+
+    if (getDefinition(iName)) {
+      return getDefinition(iName);
     }
 
     const defs = Object.values(model.definitions).filter(def => def.kind === kind);
 
-    // find bounded action/function
-    if (kind === "action" || kind === "function") {
-      for (const entity of model.each("entity")) {
-        const entityName = entity.name;
-        const actions = Object.values(entity?.actions ?? []);
-        for (const action of actions.filter(a => a.kind === kind)) {
-          const actionName = `${entityName}.${action.name}`;
-          if (iName === normalizeIdentifier(actionName)) {
-            return action;
-          }
-        }
+    for (const def of defs) {
+      if (normalizeIdentifier(def.name).endsWith(iName)) {
+        return def;
       }
     }
+
+    return findInEntities();
+  }
+);
 
 
     // find with full namespace
